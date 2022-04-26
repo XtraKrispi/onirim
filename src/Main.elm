@@ -159,6 +159,10 @@ type Msg
     | RevertToFillHand
     | UseKeyOnDoorCard
     | DoNotUseKeyOnDoorCard
+    | DrawnNightmareDiscardAKey { index : Int, keyCard : Card }
+    | DrawnNightmarePlaceDoorIntoLimbo
+    | DrawnNightmareRevealAndDiscardTopFive
+    | DrawnNightmareDiscardEntireHand
 
 
 drawUntilOnlyLocation :
@@ -539,6 +543,72 @@ update msg model =
                               }
                             , Cmd.none
                             )
+
+                        _ ->
+                            ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        DrawnNightmareDiscardAKey { index, keyCard } ->
+            case model.phase of
+                Playing gameModel ->
+                    case gameModel.turnPhase of
+                        DrawnNightmareCard ->
+                            ( { model
+                                | phase =
+                                    Playing
+                                        { gameModel
+                                            | turnPhase = FillHand
+                                            , hand = List.removeAt index gameModel.hand
+                                            , discardPile =
+                                                Nightmare
+                                                    :: keyCard
+                                                    :: gameModel.discardPile
+                                        }
+                                , modalContent = Nothing
+                              }
+                            , Cmd.none
+                            )
+
+                        _ ->
+                            ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        DrawnNightmarePlaceDoorIntoLimbo ->
+            case model.phase of
+                Playing gameModel ->
+                    case gameModel.turnPhase of
+                        DrawnNightmareCard ->
+                            ( model, Cmd.none )
+
+                        _ ->
+                            ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        DrawnNightmareRevealAndDiscardTopFive ->
+            case model.phase of
+                Playing gameModel ->
+                    case gameModel.turnPhase of
+                        DrawnNightmareCard ->
+                            ( model, Cmd.none )
+
+                        _ ->
+                            ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        DrawnNightmareDiscardEntireHand ->
+            case model.phase of
+                Playing gameModel ->
+                    case gameModel.turnPhase of
+                        DrawnNightmareCard ->
+                            ( model, Cmd.none )
 
                         _ ->
                             ( model, Cmd.none )
