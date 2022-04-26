@@ -150,9 +150,12 @@ init initialSeed =
     )
 
 
-type Msg
+type SetupMsg
     = StartNewGame
-    | WaitingForPlayerCardDecision { index : Int, card : Card }
+
+
+type PlayingMsg
+    = WaitingForPlayerCardDecision { index : Int, card : Card }
     | PlayCard
     | DiscardCard
     | Draw
@@ -162,6 +165,11 @@ type Msg
     | DrawnNightmarePlaceDoorIntoLimbo
     | DrawnNightmareRevealAndDiscardTopFive
     | DrawnNightmareDiscardEntireHand
+
+
+type Msg
+    = SetupMessage SetupMsg
+    | PlayingMessage PlayingMsg
 
 
 drawUntilOnlyLocation :
@@ -214,37 +222,52 @@ drawUntilOnlyLocation input =
             }
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model =
+updateSetupMessage : SetupMsg -> Model -> Deck Card -> ( Model, Cmd Msg )
+updateSetupMessage msg model cardDeck =
     case msg of
         StartNewGame ->
-            case model.phase of
-                Setup cardDeck ->
-                    let
-                        { hand, toMixBackIn, deck } =
-                            drawUntilOnlyLocation
-                                { hand = []
-                                , toMixBackIn = []
-                                , deck = cardDeck
-                                }
+            let
+                { hand, toMixBackIn, deck } =
+                    drawUntilOnlyLocation
+                        { hand = []
+                        , toMixBackIn = []
+                        , deck = cardDeck
+                        }
 
-                        ( newDeck, newSeed ) =
-                            deck
-                                |> Deck.add toMixBackIn
-                                |> Deck.shuffle model.seed
-                    in
+                ( newDeck, newSeed ) =
+                    deck
+                        |> Deck.add toMixBackIn
+                        |> Deck.shuffle model.seed
+            in
+            ( { model
+                | seed = newSeed
+                , phase =
+                    Playing
+                        { hand = hand
+                        , deck = newDeck
+                        , limboPile = []
+                        , discardPile = []
+                        , labyrinth = []
+                        , unlockedDoors = []
+                        , turnPhase = PlayOrDiscard Nothing
+                        }
+              }
+            , Cmd.none
+            )
+
+
+updatePlayingMessage : PlayingMsg -> Model -> GameModel -> ( Model, Cmd Msg )
+updatePlayingMessage msg model gameModel =
+    case msg of
+        WaitingForPlayerCardDecision d ->
+            case gameModel.turnPhase of
+                PlayOrDiscard Nothing ->
                     ( { model
-                        | seed = newSeed
-                        , phase =
+                        | phase =
                             Playing
-                                { hand = hand
-                                , deck = newDeck
-                                , limboPile = []
-                                , discardPile = []
-                                , labyrinth = []
-                                , unlockedDoors = []
-                                , turnPhase = PlayOrDiscard Nothing
-                                }
+                                { gameModel | turnPhase = PlayOrDiscard (Just d) }
+                        , modalContent =
+                            Just (Html.map PlayingMessage (playOrDiscardView d.card))
                       }
                     , Cmd.none
                     )
@@ -252,363 +275,312 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        WaitingForPlayerCardDecision d ->
-            case model.phase of
-                Playing gameModel ->
-                    case gameModel.turnPhase of
-                        PlayOrDiscard Nothing ->
-                            ( { model
-                                | phase =
-                                    Playing
-                                        { gameModel | turnPhase = PlayOrDiscard (Just d) }
-                                , modalContent =
-                                    Just (playOrDiscardView d.card)
-                              }
-                            , Cmd.none
-                            )
+        PlayCard ->
+            case gameModel.turnPhase of
+                PlayOrDiscard (Just { index, card }) ->
+                    let
+                        handWithoutCard =
+                            List.removeAt index gameModel.hand
 
-                        _ ->
-                            ( model, Cmd.none )
+                        { newLabyrinth, newHand } =
+                            gameModel.labyrinth
+                                |> List.head
+                                |> Maybe.map
+                                    (\c ->
+                                        case ( c, card ) of
+                                            ( Location l1, Location l2 ) ->
+                                                if l1.symbol /= l2.symbol then
+                                                    { newLabyrinth = card :: gameModel.labyrinth
+                                                    , newHand = handWithoutCard
+                                                    }
+
+                                                else
+                                                    { newLabyrinth = gameModel.labyrinth
+                                                    , newHand = gameModel.hand
+                                                    }
+
+                                            _ ->
+                                                { newLabyrinth = gameModel.labyrinth
+                                                , newHand = gameModel.hand
+                                                }
+                                    )
+                                |> Maybe.withDefault
+                                    { newLabyrinth = [ card ]
+                                    , newHand = handWithoutCard
+                                    }
+                    in
+                    ( { model
+                        | phase =
+                            Playing
+                                { gameModel
+                                    | labyrinth = newLabyrinth
+                                    , hand = newHand
+                                    , turnPhase = FillHand
+                                }
+                        , modalContent = Nothing
+                      }
+                    , Cmd.none
+                    )
 
                 _ ->
                     ( model, Cmd.none )
 
         DiscardCard ->
-            case model.phase of
-                Playing gameModel ->
-                    case gameModel.turnPhase of
-                        PlayOrDiscard (Just { index, card }) ->
-                            ( { model
-                                | phase =
-                                    Playing
-                                        { gameModel
-                                            | hand = List.removeAt index gameModel.hand
-                                            , discardPile = card :: gameModel.discardPile
-                                            , turnPhase =
-                                                case card of
-                                                    Location { symbol } ->
-                                                        case symbol of
-                                                            Key ->
-                                                                Prophecy
-
-                                                            _ ->
-                                                                FillHand
+            case gameModel.turnPhase of
+                PlayOrDiscard (Just { index, card }) ->
+                    ( { model
+                        | phase =
+                            Playing
+                                { gameModel
+                                    | hand = List.removeAt index gameModel.hand
+                                    , discardPile = card :: gameModel.discardPile
+                                    , turnPhase =
+                                        case card of
+                                            Location { symbol } ->
+                                                case symbol of
+                                                    Key ->
+                                                        Prophecy
 
                                                     _ ->
                                                         FillHand
-                                        }
-                                , modalContent = Nothing
-                              }
-                            , Cmd.none
-                            )
 
-                        _ ->
-                            ( model, Cmd.none )
-
-                _ ->
-                    ( model, Cmd.none )
-
-        PlayCard ->
-            case model.phase of
-                Playing gameModel ->
-                    case gameModel.turnPhase of
-                        PlayOrDiscard (Just { index, card }) ->
-                            let
-                                handWithoutCard =
-                                    List.removeAt index gameModel.hand
-
-                                { newLabyrinth, newHand } =
-                                    gameModel.labyrinth
-                                        |> List.head
-                                        |> Maybe.map
-                                            (\c ->
-                                                case ( c, card ) of
-                                                    ( Location l1, Location l2 ) ->
-                                                        if l1.symbol /= l2.symbol then
-                                                            { newLabyrinth = card :: gameModel.labyrinth
-                                                            , newHand = handWithoutCard
-                                                            }
-
-                                                        else
-                                                            { newLabyrinth = gameModel.labyrinth
-                                                            , newHand = gameModel.hand
-                                                            }
-
-                                                    _ ->
-                                                        { newLabyrinth = gameModel.labyrinth
-                                                        , newHand = gameModel.hand
-                                                        }
-                                            )
-                                        |> Maybe.withDefault
-                                            { newLabyrinth = [ card ]
-                                            , newHand = handWithoutCard
-                                            }
-                            in
-                            ( { model
-                                | phase =
-                                    Playing
-                                        { gameModel
-                                            | labyrinth = newLabyrinth
-                                            , hand = newHand
-                                            , turnPhase = FillHand
-                                        }
-                                , modalContent = Nothing
-                              }
-                            , Cmd.none
-                            )
-
-                        _ ->
-                            ( model, Cmd.none )
+                                            _ ->
+                                                FillHand
+                                }
+                        , modalContent = Nothing
+                      }
+                    , Cmd.none
+                    )
 
                 _ ->
                     ( model, Cmd.none )
 
         Draw ->
-            case model.phase of
-                Playing gameModel ->
-                    case gameModel.turnPhase of
-                        FillHand ->
-                            if List.length gameModel.hand == 5 then
-                                let
-                                    nextPhase =
-                                        if List.length gameModel.limboPile > 0 then
-                                            ShuffleLimboPile
+            case gameModel.turnPhase of
+                FillHand ->
+                    if List.length gameModel.hand == 5 then
+                        let
+                            nextPhase =
+                                if List.length gameModel.limboPile > 0 then
+                                    ShuffleLimboPile
 
-                                        else
-                                            PlayOrDiscard Nothing
-                                in
-                                ( { model | phase = Playing { gameModel | turnPhase = nextPhase } }
-                                , Cmd.none
-                                )
+                                else
+                                    PlayOrDiscard Nothing
+                        in
+                        ( { model | phase = Playing { gameModel | turnPhase = nextPhase } }
+                        , Cmd.none
+                        )
 
-                            else
-                                let
-                                    { cards, deck } =
-                                        Deck.draw 1 gameModel.deck
+                    else
+                        let
+                            { cards, deck } =
+                                Deck.draw 1 gameModel.deck
 
-                                    ( newModel, newCmd ) =
-                                        case cards of
-                                            -- If we try to draw a card and none
-                                            -- are left, we've lost
-                                            [] ->
-                                                ( { model | phase = GameOver PlayerLost }, Cmd.none )
+                            ( newModel, newCmd ) =
+                                case List.head cards of
+                                    -- If we try to draw a card and none
+                                    -- are left, we've lost
+                                    Nothing ->
+                                        ( { model | phase = GameOver PlayerLost }, Cmd.none )
 
-                                            -- Drawing a location card just goes
-                                            -- into our hand
-                                            [ (Location _) as card ] ->
+                                    -- Drawing a location card just goes
+                                    -- into our hand
+                                    Just ((Location _) as card) ->
+                                        ( { model
+                                            | phase =
+                                                Playing
+                                                    { gameModel
+                                                        | deck = deck
+                                                        , hand = card :: gameModel.hand
+                                                    }
+                                          }
+                                        , Cmd.none
+                                        )
+
+                                    -- Drawing a door card means that
+                                    -- if we have a key, we can (choice)
+                                    -- use it to unlock the door,
+                                    -- otherwise it goes into Limbo to be reshuffled
+                                    Just ((Door { suit }) as card) ->
+                                        let
+                                            matchingKey =
+                                                List.find
+                                                    (\c ->
+                                                        let
+                                                            info =
+                                                                Card.basicInformation c
+                                                        in
+                                                        info.symbol == Just Key && info.suit == Just suit
+                                                    )
+                                                    gameModel.hand
+                                        in
+                                        case matchingKey of
+                                            Just keyCard ->
                                                 ( { model
                                                     | phase =
                                                         Playing
                                                             { gameModel
-                                                                | deck = deck
-                                                                , hand = card :: gameModel.hand
+                                                                | turnPhase = DrawnDoorCard { doorCard = card, keyCard = keyCard }
+                                                                , deck = deck
                                                             }
+                                                    , modalContent =
+                                                        Just <|
+                                                            Html.map PlayingMessage
+                                                                (Html.div []
+                                                                    [ Html.span [] [ Html.text "You drew a door card" ]
+                                                                    , Card.view card
+                                                                    , Html.span [] [ Html.text "Do you want to use a key?" ]
+                                                                    , Html.div []
+                                                                        [ Html.button [ onClick UseKeyOnDoorCard ] [ Html.text "Yes" ]
+                                                                        , Html.button [ onClick DoNotUseKeyOnDoorCard ] [ Html.text "No" ]
+                                                                        ]
+                                                                    ]
+                                                                )
                                                   }
                                                 , Cmd.none
                                                 )
 
-                                            -- Drawing a door card means that
-                                            -- if we have a key, we can (choice)
-                                            -- use it to unlock the door,
-                                            -- otherwise it goes into Limbo to be reshuffled
-                                            [ (Door { suit }) as card ] ->
-                                                let
-                                                    matchingKey =
-                                                        List.find
-                                                            (\c ->
-                                                                let
-                                                                    info =
-                                                                        Card.basicInformation c
-                                                                in
-                                                                info.symbol == Just Key && info.suit == Just suit
-                                                            )
-                                                            gameModel.hand
-                                                in
-                                                case matchingKey of
-                                                    Just keyCard ->
-                                                        ( { model
-                                                            | phase =
-                                                                Playing
-                                                                    { gameModel
-                                                                        | turnPhase = DrawnDoorCard { doorCard = card, keyCard = keyCard }
-                                                                        , deck = deck
-                                                                    }
-                                                            , modalContent =
-                                                                Just
-                                                                    (Html.div []
-                                                                        [ Html.span [] [ Html.text "You drew a door card" ]
-                                                                        , Card.view card
-                                                                        , Html.span [] [ Html.text "Do you want to use a key?" ]
-                                                                        , Html.div []
-                                                                            [ Html.button [ onClick UseKeyOnDoorCard ] [ Html.text "Yes" ]
-                                                                            , Html.button [ onClick DoNotUseKeyOnDoorCard ] [ Html.text "No" ]
-                                                                            ]
-                                                                        ]
-                                                                    )
-                                                          }
-                                                        , Cmd.none
-                                                        )
-
-                                                    Nothing ->
-                                                        ( { model
-                                                            | phase =
-                                                                Playing
-                                                                    { gameModel
-                                                                        | turnPhase = DrawnDoorCardNoKey card
-                                                                        , limboPile = card :: gameModel.limboPile
-                                                                        , deck = deck
-                                                                    }
-                                                          }
-                                                        , Cmd.none
-                                                        )
-
-                                            -- Nightmare cards bring 4 options for the
-                                            -- player:
-                                            -- 1) Discard a key
-                                            -- 2) Place a gained door into Limbo
-                                            -- 3) Reveal the top 5 cards, and discard
-                                            --    everything BUT door/nightmare cards
-                                            --    and put those into Limbo
-                                            -- 4) Discard the entire hand and
-                                            --    redraw like at the beginning of the game
-                                            [ Nightmare ] ->
+                                            Nothing ->
                                                 ( { model
                                                     | phase =
                                                         Playing
                                                             { gameModel
-                                                                | turnPhase = DrawnNightmareCard
+                                                                | turnPhase = DrawnDoorCardNoKey card
+                                                                , limboPile = card :: gameModel.limboPile
                                                                 , deck = deck
                                                             }
                                                   }
                                                 , Cmd.none
                                                 )
 
-                                            _ ->
-                                                ( model, Cmd.none )
-
-                                    -- TODO: Need to draw one card and resolve
-                                in
-                                ( newModel, newCmd )
-
-                        _ ->
-                            ( model, Cmd.none )
+                                    -- Nightmare cards bring 4 options for the
+                                    -- player:
+                                    -- 1) Discard a key
+                                    -- 2) Place a gained door into Limbo
+                                    -- 3) Reveal the top 5 cards, and discard
+                                    --    everything BUT door/nightmare cards
+                                    --    and put those into Limbo
+                                    -- 4) Discard the entire hand and
+                                    --    redraw like at the beginning of the game
+                                    Just Nightmare ->
+                                        ( { model
+                                            | phase =
+                                                Playing
+                                                    { gameModel
+                                                        | turnPhase = DrawnNightmareCard
+                                                        , deck = deck
+                                                    }
+                                          }
+                                        , Cmd.none
+                                        )
+                        in
+                        ( newModel, newCmd )
 
                 _ ->
                     ( model, Cmd.none )
 
         UseKeyOnDoorCard ->
-            case model.phase of
-                Playing gameModel ->
-                    case gameModel.turnPhase of
-                        DrawnDoorCard { doorCard, keyCard } ->
-                            ( { model
-                                | phase =
-                                    Playing
-                                        { gameModel
-                                            | turnPhase = FillHand
-                                            , hand = List.remove keyCard gameModel.hand
-                                            , discardPile = keyCard :: gameModel.discardPile
-                                            , unlockedDoors = doorCard :: gameModel.unlockedDoors
-                                        }
-                                , modalContent = Nothing
-                              }
-                            , Cmd.none
-                            )
-
-                        _ ->
-                            ( model, Cmd.none )
+            case gameModel.turnPhase of
+                DrawnDoorCard { doorCard, keyCard } ->
+                    ( { model
+                        | phase =
+                            Playing
+                                { gameModel
+                                    | turnPhase = FillHand
+                                    , hand = List.remove keyCard gameModel.hand
+                                    , discardPile = keyCard :: gameModel.discardPile
+                                    , unlockedDoors = doorCard :: gameModel.unlockedDoors
+                                }
+                        , modalContent = Nothing
+                      }
+                    , Cmd.none
+                    )
 
                 _ ->
                     ( model, Cmd.none )
 
         DoNotUseKeyOnDoorCard ->
-            case model.phase of
-                Playing gameModel ->
-                    case gameModel.turnPhase of
-                        DrawnDoorCard { doorCard } ->
-                            ( { model
-                                | phase =
-                                    Playing
-                                        { gameModel
-                                            | turnPhase = FillHand
-                                            , limboPile = doorCard :: gameModel.limboPile
-                                        }
-                                , modalContent = Nothing
-                              }
-                            , Cmd.none
-                            )
-
-                        _ ->
-                            ( model, Cmd.none )
+            case gameModel.turnPhase of
+                DrawnDoorCard { doorCard } ->
+                    ( { model
+                        | phase =
+                            Playing
+                                { gameModel
+                                    | turnPhase = FillHand
+                                    , limboPile = doorCard :: gameModel.limboPile
+                                }
+                        , modalContent = Nothing
+                      }
+                    , Cmd.none
+                    )
 
                 _ ->
                     ( model, Cmd.none )
 
         DrawnNightmareDiscardAKey { index, keyCard } ->
-            case model.phase of
-                Playing gameModel ->
-                    case gameModel.turnPhase of
-                        DrawnNightmareCard ->
-                            ( { model
-                                | phase =
-                                    Playing
-                                        { gameModel
-                                            | turnPhase = FillHand
-                                            , hand = List.removeAt index gameModel.hand
-                                            , discardPile =
-                                                Nightmare
-                                                    :: keyCard
-                                                    :: gameModel.discardPile
-                                        }
-                                , modalContent = Nothing
-                              }
-                            , Cmd.none
-                            )
-
-                        _ ->
-                            ( model, Cmd.none )
+            case gameModel.turnPhase of
+                DrawnNightmareCard ->
+                    ( { model
+                        | phase =
+                            Playing
+                                { gameModel
+                                    | turnPhase = FillHand
+                                    , hand = List.removeAt index gameModel.hand
+                                    , discardPile =
+                                        Nightmare
+                                            :: keyCard
+                                            :: gameModel.discardPile
+                                }
+                        , modalContent = Nothing
+                      }
+                    , Cmd.none
+                    )
 
                 _ ->
                     ( model, Cmd.none )
 
         DrawnNightmarePlaceDoorIntoLimbo ->
-            case model.phase of
-                Playing gameModel ->
-                    case gameModel.turnPhase of
-                        DrawnNightmareCard ->
-                            ( model, Cmd.none )
-
-                        _ ->
-                            ( model, Cmd.none )
+            case gameModel.turnPhase of
+                DrawnNightmareCard ->
+                    ( model, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
 
         DrawnNightmareRevealAndDiscardTopFive ->
-            case model.phase of
-                Playing gameModel ->
-                    case gameModel.turnPhase of
-                        DrawnNightmareCard ->
-                            ( model, Cmd.none )
-
-                        _ ->
-                            ( model, Cmd.none )
+            case gameModel.turnPhase of
+                DrawnNightmareCard ->
+                    ( model, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
 
         DrawnNightmareDiscardEntireHand ->
-            case model.phase of
-                Playing gameModel ->
-                    case gameModel.turnPhase of
-                        DrawnNightmareCard ->
-                            ( model, Cmd.none )
-
-                        _ ->
-                            ( model, Cmd.none )
+            case gameModel.turnPhase of
+                DrawnNightmareCard ->
+                    ( model, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case ( model.phase, msg ) of
+        ( Setup cardDeck, SetupMessage sMsg ) ->
+            updateSetupMessage sMsg model cardDeck
+
+        ( Playing gameModel, PlayingMessage gMsg ) ->
+            updatePlayingMessage gMsg model gameModel
+
+        ( Setup _, _ ) ->
+            ( model, Cmd.none )
+
+        ( Playing _, _ ) ->
+            ( model, Cmd.none )
+
+        ( GameOver _, _ ) ->
+            ( model, Cmd.none )
 
 
 subscriptions : Model -> Sub Msg
@@ -616,7 +588,7 @@ subscriptions _ =
     Sub.none
 
 
-playOrDiscardView : Card -> Html Msg
+playOrDiscardView : Card -> Html PlayingMsg
 playOrDiscardView card =
     Html.div []
         [ Card.view card
@@ -627,7 +599,7 @@ playOrDiscardView card =
         ]
 
 
-modal : Maybe (Html Msg) -> Html Msg
+modal : Maybe (Html msg) -> Html msg
 modal mContent =
     let
         outerDivStyles =
@@ -692,7 +664,7 @@ modal mContent =
                 ]
 
 
-overlappingCard : List (Attribute Msg) -> Int -> Card -> Html Msg
+overlappingCard : List (Attribute msg) -> Int -> Card -> Html msg
 overlappingCard attrs idx card =
     Html.div
         (css
@@ -713,7 +685,7 @@ overlappingCard attrs idx card =
         [ Card.view card ]
 
 
-setupView : Model -> Html Msg
+setupView : Model -> Html SetupMsg
 setupView _ =
     Html.div
         [ css
@@ -740,7 +712,7 @@ setupView _ =
         ]
 
 
-playingView : GameModel -> Html Msg
+playingView : GameModel -> Html PlayingMsg
 playingView model =
     Html.div
         [ css
@@ -821,10 +793,10 @@ view model =
                 ]
             , case model.phase of
                 Setup _ ->
-                    setupView model
+                    Html.map SetupMessage <| setupView model
 
                 Playing gameModel ->
-                    playingView gameModel
+                    Html.map PlayingMessage <| playingView gameModel
 
                 GameOver PlayerLost ->
                     Html.div [] [ Html.text "Game Over - You Lost" ]
