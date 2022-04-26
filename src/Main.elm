@@ -57,9 +57,7 @@ import Html.Styled as Html exposing (Attribute, Html, toUnstyled)
 import Html.Styled.Attributes exposing (css)
 import Html.Styled.Events exposing (onClick)
 import List.Extra as List
-import Process
 import Random
-import Task
 
 
 main : Program Int Model Msg
@@ -88,7 +86,7 @@ type TurnPhase
     | Prophecy
     | FillHand
     | DrawnDoorCard { doorCard : Card, keyCard : Card }
-    | DrawnDoorCardNoKey
+    | DrawnDoorCardNoKey Card
     | DrawnNightmareCard
     | ShuffleLimboPile
 
@@ -105,7 +103,7 @@ turnPhaseToString turnPhase =
         DrawnDoorCard _ ->
             "Drew a door card"
 
-        DrawnDoorCardNoKey ->
+        DrawnDoorCardNoKey _ ->
             "Drew a door card but didn't have a key"
 
         DrawnNightmareCard ->
@@ -140,7 +138,9 @@ init : Int -> ( Model, Cmd Msg )
 init initialSeed =
     let
         ( initialDeck, seed ) =
-            Deck.shuffle (Random.initialSeed initialSeed) (Deck.new Card.cards)
+            Deck.shuffle
+                (Random.initialSeed initialSeed)
+                (Deck.new Card.cards)
     in
     ( { seed = seed
       , phase = Setup initialDeck
@@ -156,7 +156,6 @@ type Msg
     | PlayCard
     | DiscardCard
     | Draw
-    | RevertToFillHand
     | UseKeyOnDoorCard
     | DoNotUseKeyOnDoorCard
     | DrawnNightmareDiscardAKey { index : Int, keyCard : Card }
@@ -413,16 +412,19 @@ update msg model =
                                             -- use it to unlock the door,
                                             -- otherwise it goes into Limbo to be reshuffled
                                             [ (Door { suit }) as card ] ->
-                                                case
-                                                    List.find
-                                                        (\c ->
-                                                            (Card.basicInformation c).symbol
-                                                                == Just Key
-                                                                && (Card.basicInformation c).suit
-                                                                == Just suit
-                                                        )
-                                                        gameModel.hand
-                                                of
+                                                let
+                                                    matchingKey =
+                                                        List.find
+                                                            (\c ->
+                                                                let
+                                                                    info =
+                                                                        Card.basicInformation c
+                                                                in
+                                                                info.symbol == Just Key && info.suit == Just suit
+                                                            )
+                                                            gameModel.hand
+                                                in
+                                                case matchingKey of
                                                     Just keyCard ->
                                                         ( { model
                                                             | phase =
@@ -452,12 +454,12 @@ update msg model =
                                                             | phase =
                                                                 Playing
                                                                     { gameModel
-                                                                        | turnPhase = DrawnDoorCardNoKey
+                                                                        | turnPhase = DrawnDoorCardNoKey card
                                                                         , limboPile = card :: gameModel.limboPile
                                                                         , deck = deck
                                                                     }
                                                           }
-                                                        , Task.perform (always RevertToFillHand) (Process.sleep 2000)
+                                                        , Cmd.none
                                                         )
 
                                             -- Nightmare cards bring 4 options for the
@@ -490,14 +492,6 @@ update msg model =
 
                         _ ->
                             ( model, Cmd.none )
-
-                _ ->
-                    ( model, Cmd.none )
-
-        RevertToFillHand ->
-            case model.phase of
-                Playing gameModel ->
-                    ( { model | phase = Playing { gameModel | turnPhase = FillHand } }, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
@@ -832,7 +826,10 @@ view model =
                 Playing gameModel ->
                     playingView gameModel
 
-                GameOver _ ->
-                    Html.div [] [ Html.text "Game Over" ]
+                GameOver PlayerLost ->
+                    Html.div [] [ Html.text "Game Over - You Lost" ]
+
+                GameOver PlayerWon ->
+                    Html.div [] [ Html.text "Game Over - You Won!" ]
             , modal model.modalContent
             ]
