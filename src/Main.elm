@@ -833,6 +833,6 @@ view model =
                     playingView gameModel
 
                 GameOver _ ->
-                    Debug.todo "branch 'GameOver' not implemented"
+                    Html.div [] [ Html.text "Game Over" ]
             , modal model.modalContent
             ]
