@@ -1,6 +1,6 @@
 # Onirim
 [Onirim](https://boardgamegeek.com/boardgame/71836/onirim) is a solo board game
-with simple rules. 
+with simple rules. I'm using the rules [here](https://images.zmangames.com/filer_public/fd/0e/fd0ef6a2-c019-47a2-910a-a556f03a3d02/zm4900_onirim_rules.pdf)
 
 This is an implementation using the [Elm](https://elm-lang.org/) programming language.
 
