@@ -62,7 +62,7 @@ import Random
 import Task
 
 
-main : Program () Model Msg
+main : Program Int Model Msg
 main =
     Browser.element
         { init = init
@@ -136,11 +136,11 @@ type alias Model =
     }
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
+init : Int -> ( Model, Cmd Msg )
+init initialSeed =
     let
         ( initialDeck, seed ) =
-            Deck.shuffle (Random.initialSeed 0) (Deck.new Card.cards)
+            Deck.shuffle (Random.initialSeed initialSeed) (Deck.new Card.cards)
     in
     ( { seed = seed
       , phase = Setup initialDeck
