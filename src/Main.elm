@@ -54,7 +54,7 @@ import Css.Transitions exposing (transition)
 import Deck exposing (Deck, draw)
 import Html as H
 import Html.Styled as Html exposing (Attribute, Html, toUnstyled)
-import Html.Styled.Attributes exposing (css)
+import Html.Styled.Attributes as Attributes exposing (css)
 import Html.Styled.Events exposing (onClick)
 import List.Extra as List
 import Random
@@ -81,6 +81,11 @@ type GameEndState
     | PlayerLost
 
 
+type NightmareSubPhase
+    = WaitingForSelection
+    | DrawnFive (List Card)
+
+
 type TurnPhase
     = PlayOrDiscard (Maybe { index : Int, card : Card })
     | Prophecy
@@ -88,6 +93,7 @@ type TurnPhase
     | DrawnDoorCard { doorCard : Card, keyCard : Card }
     | DrawnDoorCardNoKey Card
     | DrawnNightmareCard
+    | DrawnNightmareWaitingToDiscardKey
     | ShuffleLimboPile
 
 
@@ -108,6 +114,9 @@ turnPhaseToString turnPhase =
 
         DrawnNightmareCard ->
             "Drew a nightmare card"
+
+        DrawnNightmareWaitingToDiscardKey ->
+            "Need to discard a key"
 
         ShuffleLimboPile ->
             "Shuffling Limbo Pile"
@@ -155,14 +164,16 @@ type SetupMsg
 
 
 type PlayingMsg
-    = WaitingForPlayerCardDecision { index : Int, card : Card }
+    = ClickCard { index : Int, card : Card }
     | PlayCard
     | DiscardCard
     | Draw
     | UseKeyOnDoorCard
     | DoNotUseKeyOnDoorCard
+    | DrawnNightmareNeedToDiscardKey
+    | DrawnNightmareNeedToPlaceDoorIntoLimbo
     | DrawnNightmareDiscardAKey { index : Int, keyCard : Card }
-    | DrawnNightmarePlaceDoorIntoLimbo
+    | DrawnNightmarePlaceDoorIntoLimbo { index : Int, doorCard : Card }
     | DrawnNightmareRevealAndDiscardTopFive
     | DrawnNightmareDiscardEntireHand
 
@@ -259,7 +270,7 @@ updateSetupMessage msg model cardDeck =
 updatePlayingMessage : PlayingMsg -> Model -> GameModel -> ( Model, Cmd Msg )
 updatePlayingMessage msg model gameModel =
     case msg of
-        WaitingForPlayerCardDecision d ->
+        ClickCard d ->
             case gameModel.turnPhase of
                 PlayOrDiscard Nothing ->
                     ( { model
@@ -267,10 +278,30 @@ updatePlayingMessage msg model gameModel =
                             Playing
                                 { gameModel | turnPhase = PlayOrDiscard (Just d) }
                         , modalContent =
-                            Just (Html.map PlayingMessage (playOrDiscardView d.card))
+                            d.card
+                                |> playOrDiscardView
+                                |> Html.map PlayingMessage
+                                |> Just
                       }
                     , Cmd.none
                     )
+
+                DrawnNightmareWaitingToDiscardKey ->
+                    if Card.isKey d.card then
+                        ( { model
+                            | phase =
+                                Playing
+                                    { gameModel
+                                        | turnPhase = FillHand
+                                        , hand = List.removeAt d.index gameModel.hand
+                                        , discardPile = d.card :: gameModel.discardPile
+                                    }
+                          }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( model, Cmd.none )
 
                 _ ->
                     ( model, Cmd.none )
@@ -282,7 +313,7 @@ updatePlayingMessage msg model gameModel =
                         handWithoutCard =
                             List.removeAt index gameModel.hand
 
-                        { newLabyrinth, newHand } =
+                        { newLabyrinth, newHand, newPhase } =
                             gameModel.labyrinth
                                 |> List.head
                                 |> Maybe.map
@@ -292,21 +323,25 @@ updatePlayingMessage msg model gameModel =
                                                 if l1.symbol /= l2.symbol then
                                                     { newLabyrinth = card :: gameModel.labyrinth
                                                     , newHand = handWithoutCard
+                                                    , newPhase = FillHand
                                                     }
 
                                                 else
                                                     { newLabyrinth = gameModel.labyrinth
                                                     , newHand = gameModel.hand
+                                                    , newPhase = PlayOrDiscard Nothing
                                                     }
 
                                             _ ->
                                                 { newLabyrinth = gameModel.labyrinth
                                                 , newHand = gameModel.hand
+                                                , newPhase = PlayOrDiscard Nothing
                                                 }
                                     )
                                 |> Maybe.withDefault
                                     { newLabyrinth = [ card ]
                                     , newHand = handWithoutCard
+                                    , newPhase = FillHand
                                     }
                     in
                     ( { model
@@ -315,7 +350,7 @@ updatePlayingMessage msg model gameModel =
                                 { gameModel
                                     | labyrinth = newLabyrinth
                                     , hand = newHand
-                                    , turnPhase = FillHand
+                                    , turnPhase = newPhase
                                 }
                         , modalContent = Nothing
                       }
@@ -463,6 +498,27 @@ updatePlayingMessage msg model gameModel =
                                     -- 4) Discard the entire hand and
                                     --    redraw like at the beginning of the game
                                     Just Nightmare ->
+                                        let
+                                            hasKey =
+                                                gameModel.hand
+                                                    |> List.any (\c -> (Card.basicInformation c).symbol == Just Key)
+
+                                            hasAnyDoors =
+                                                not (List.isEmpty gameModel.unlockedDoors)
+
+                                            choices =
+                                                [ Html.button
+                                                    [ Attributes.disabled (not hasKey)
+                                                    , onClick DrawnNightmareNeedToDiscardKey
+                                                    ]
+                                                    [ Html.text
+                                                        "Discard a key"
+                                                    ]
+                                                , Html.button [ Attributes.disabled (not hasAnyDoors) ] [ Html.text "Toss an unlocked door in Limbo" ]
+                                                , Html.button [] [ Html.text "Discard the top five cards, throwing away Location cards" ]
+                                                , Html.button [] [ Html.text "Discard your entire hand and redraw" ]
+                                                ]
+                                        in
                                         ( { model
                                             | phase =
                                                 Playing
@@ -470,6 +526,15 @@ updatePlayingMessage msg model gameModel =
                                                         | turnPhase = DrawnNightmareCard
                                                         , deck = deck
                                                     }
+                                            , modalContent =
+                                                Just
+                                                    (Html.map PlayingMessage
+                                                        (Html.div []
+                                                            [ Html.h2 [] [ Html.text "You drew a Nightmare card, you have a choice to make" ]
+                                                            , Html.div [] (List.map identity choices)
+                                                            ]
+                                                        )
+                                                    )
                                           }
                                         , Cmd.none
                                         )
@@ -517,6 +582,22 @@ updatePlayingMessage msg model gameModel =
                 _ ->
                     ( model, Cmd.none )
 
+        DrawnNightmareNeedToDiscardKey ->
+            ( { model
+                | phase =
+                    Playing
+                        { gameModel
+                            | turnPhase = DrawnNightmareWaitingToDiscardKey
+                        }
+                , modalContent = Nothing
+              }
+            , Cmd.none
+            )
+
+        DrawnNightmareNeedToPlaceDoorIntoLimbo ->
+            -- TODO: Do this
+            ( model, Cmd.none )
+
         DrawnNightmareDiscardAKey { index, keyCard } ->
             case gameModel.turnPhase of
                 DrawnNightmareCard ->
@@ -539,10 +620,22 @@ updatePlayingMessage msg model gameModel =
                 _ ->
                     ( model, Cmd.none )
 
-        DrawnNightmarePlaceDoorIntoLimbo ->
+        DrawnNightmarePlaceDoorIntoLimbo { index, doorCard } ->
             case gameModel.turnPhase of
                 DrawnNightmareCard ->
-                    ( model, Cmd.none )
+                    ( { model
+                        | phase =
+                            Playing
+                                { gameModel
+                                    | turnPhase = FillHand
+                                    , limboPile = doorCard :: gameModel.limboPile
+                                    , discardPile = Nightmare :: gameModel.discardPile
+                                    , unlockedDoors = List.removeAt index gameModel.unlockedDoors
+                                }
+                        , modalContent = Nothing
+                      }
+                    , Cmd.none
+                    )
 
                 _ ->
                     ( model, Cmd.none )
@@ -758,15 +851,26 @@ playingView model =
                 (\i c ->
                     overlappingCard
                         [ css
-                            [ hover
-                                [ zIndex (int 2)
-                                , transforms
-                                    [ translateY (pct -20)
-                                    , rotateZ (deg 10)
+                            (case ( model.turnPhase, (Card.basicInformation c).symbol ) of
+                                ( DrawnNightmareWaitingToDiscardKey, Just Key ) ->
+                                    [ hover [ zIndex (int 2) ]
+                                    , transforms
+                                        [ translateY (pct -20)
+                                        , rotateZ (deg 10)
+                                        ]
                                     ]
-                                ]
-                            ]
-                        , onClick (WaitingForPlayerCardDecision { index = i, card = c })
+
+                                _ ->
+                                    [ hover
+                                        [ zIndex (int 2)
+                                        , transforms
+                                            [ translateY (pct -20)
+                                            , rotateZ (deg 10)
+                                            ]
+                                        ]
+                                    ]
+                            )
+                        , onClick (ClickCard { index = i, card = c })
                         ]
                         i
                         c

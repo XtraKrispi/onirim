@@ -117,6 +117,11 @@ cardBack =
         [ Html.text "Back" ]
 
 
+isKey : Card -> Bool
+isKey card =
+    (basicInformation card).symbol == Just Key
+
+
 view : Card -> Html msg
 view c =
     case c of
